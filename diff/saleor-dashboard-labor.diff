@@ -1,0 +1,573 @@
+diff --git a/schema.graphql b/schema.graphql
+index 98993d3b..9d09a851 100644
+--- a/schema.graphql
++++ b/schema.graphql
+@@ -774,7 +774,7 @@ type Checkout implements Node & ObjectWithMetadata {
+   privateMeta: [MetaStore]! @deprecated(reason: "Use the `privetaMetadata` field. This field will be removed after 2020-07-31.")
+   meta: [MetaStore]! @deprecated(reason: "Use the `metadata` field. This field will be removed after 2020-07-31.")
+   availableShippingMethods: [ShippingMethod]!
+-  availablePaymentGateways: [PaymentGateway]!
++  availablePaymentGateways: [PaymentGateway!]!
+   email: String!
+   isShippingRequired: Boolean!
+   lines: [CheckoutLine]
+@@ -867,6 +867,7 @@ enum CheckoutErrorCode {
+   BILLING_ADDRESS_NOT_SET
+   CHECKOUT_NOT_FULLY_PAID
+   GRAPHQL_ERROR
++  PRODUCT_NOT_PUBLISHED
+   INSUFFICIENT_STOCK
+   INVALID
+   INVALID_SHIPPING_METHOD
+@@ -1955,6 +1956,7 @@ enum LanguageCodeEnum {
+   ES_CO
+   ET
+   FA
++  FI
+   FR
+   HI
+   HU
+@@ -1974,10 +1976,12 @@ enum LanguageCodeEnum {
+   RO
+   RU
+   SK
++  SL
+   SQ
+   SR
+-  SW
+   SV
++  SW
++  TA
+   TH
+   TR
+   UK
+@@ -2669,6 +2673,7 @@ enum OrderErrorCode {
+   FULFILL_ORDER_LINE
+   GRAPHQL_ERROR
+   INVALID
++  PRODUCT_NOT_PUBLISHED
+   NOT_FOUND
+   ORDER_NO_SHIPPING_ADDRESS
+   PAYMENT_ERROR
+@@ -3094,6 +3099,9 @@ enum PaymentErrorCode {
+   INVALID
+   NOT_FOUND
+   PARTIAL_PAYMENT_NOT_ALLOWED
++  SHIPPING_ADDRESS_NOT_SET
++  INVALID_SHIPPING_METHOD
++  SHIPPING_METHOD_NOT_SET
+   PAYMENT_ERROR
+   REQUIRED
+   UNIQUE
+@@ -3101,6 +3109,7 @@ enum PaymentErrorCode {
+ 
+ type PaymentGateway {
+   name: String!
++  id: ID!
+   config: [GatewayConfigLine!]!
+ }
+ 
+@@ -3299,6 +3308,7 @@ type Product implements Node & ObjectWithMetadata {
+   productType: ProductType!
+   slug: String!
+   category: Category
++  labor: Money
+   updatedAt: DateTime
+   chargeTaxes: Boolean!
+   weight: Weight
+@@ -3383,6 +3393,7 @@ input ProductCreateInput {
+   name: String
+   slug: String
+   basePrice: Decimal
++  labor: Decimal
+   taxCode: String
+   seo: SeoInput
+   weight: WeightScalar
+@@ -3497,6 +3508,7 @@ input ProductInput {
+   name: String
+   slug: String
+   basePrice: Decimal
++  labor: Decimal
+   taxCode: String
+   seo: SeoInput
+   weight: WeightScalar
+@@ -3716,7 +3728,7 @@ type ProductVariant implements Node & ObjectWithMetadata {
+   meta: [MetaStore]! @deprecated(reason: "Use the `metadata` field. This field will be removed after 2020-07-31.")
+   quantity: Int! @deprecated(reason: "Use the stock field instead. This field will be removed after 2020-07-31.")
+   quantityAllocated: Int @deprecated(reason: "Use the stock field instead. This field will be removed after 2020-07-31.")
+-  stockQuantity: Int! @deprecated(reason: "Use the stock field instead. This field will be removed after 2020-07-31.")
++  stockQuantity: Int! @deprecated(reason: "Use the quantityAvailable field instead. This field will be removed after 2020-07-31.")
+   priceOverride: Money
+   pricing: VariantPricingInfo
+   isAvailable: Boolean @deprecated(reason: "Use the stock field instead. This field will be removed after 2020-07-31.")
+@@ -3729,6 +3741,7 @@ type ProductVariant implements Node & ObjectWithMetadata {
+   translation(languageCode: LanguageCodeEnum!): ProductVariantTranslation
+   digitalContent: DigitalContent
+   stocks(countryCode: CountryCode): [Stock]
++  quantityAvailable(countryCode: CountryCode): Int!
+ }
+ 
+ type ProductVariantBulkCreate {
+@@ -3883,10 +3896,10 @@ type Query {
+   attributes(filter: AttributeFilterInput, sortBy: AttributeSortingInput, before: String, after: String, first: Int, last: Int): AttributeCountableConnection
+   attribute(id: ID!): Attribute
+   categories(filter: CategoryFilterInput, sortBy: CategorySortingInput, level: Int, before: String, after: String, first: Int, last: Int): CategoryCountableConnection
+-  category(id: ID!): Category
+-  collection(id: ID!): Collection
++  category(id: ID, slug: String): Category
++  collection(id: ID, slug: String): Collection
+   collections(filter: CollectionFilterInput, sortBy: CollectionSortingInput, before: String, after: String, first: Int, last: Int): CollectionCountableConnection
+-  product(id: ID!): Product
++  product(id: ID, slug: String): Product
+   products(filter: ProductFilterInput, sortBy: ProductOrder, stockAvailability: StockAvailability, before: String, after: String, first: Int, last: Int): ProductCountableConnection
+   productType(id: ID!): ProductType
+   productTypes(filter: ProductTypeFilterInput, sortBy: ProductTypeSortingInput, before: String, after: String, first: Int, last: Int): ProductTypeCountableConnection
+@@ -4352,9 +4365,10 @@ input ShippingZoneUpdateInput {
+ }
+ 
+ type Shop {
++  availablePaymentGateways: [PaymentGateway!]!
+   geolocalization: Geolocalization
+   authorizationKeys: [AuthorizationKey]!
+-  countries(languageCode: LanguageCodeEnum): [CountryDisplay]!
++  countries(languageCode: LanguageCodeEnum): [CountryDisplay!]!
+   currencies: [String]!
+   defaultCurrency: String!
+   defaultCountry: CountryDisplay
+@@ -4561,7 +4575,6 @@ type Stock implements Node {
+   productVariant: ProductVariant!
+   quantity: Int!
+   id: ID!
+-  stockQuantity: Int!
+   quantityAllocated: Int!
+ }
+ 
+diff --git a/src/config.ts b/src/config.ts
+index 90b81e7c..a8560574 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -18,7 +18,7 @@ export const DEFAULT_INITIAL_PAGINATION_DATA: Pagination = {
+ 
+ export const PAGINATE_BY = 20;
+ 
+-export type ProductListColumns = "productType" | "isPublished" | "price";
++export type ProductListColumns = "productType" | "isPublished" | "price" | "labor";
+ export interface AppListViewSettings {
+   [ListViews.CATEGORY_LIST]: ListSettings;
+   [ListViews.COLLECTION_LIST]: ListSettings;
+@@ -63,7 +63,7 @@ export const defaultListSettings: AppListViewSettings = {
+     rowNumber: PAGINATE_BY
+   },
+   [ListViews.PRODUCT_LIST]: {
+-    columns: ["isPublished", "price", "productType"],
++    columns: ["isPublished", "price", "productType", "labor"],
+     rowNumber: PAGINATE_BY
+   },
+   [ListViews.SALES_LIST]: {
+diff --git a/src/products/components/ProductCreatePage/ProductCreatePage.tsx b/src/products/components/ProductCreatePage/ProductCreatePage.tsx
+index 3d1ae00f..8b9176f4 100644
+--- a/src/products/components/ProductCreatePage/ProductCreatePage.tsx
++++ b/src/products/components/ProductCreatePage/ProductCreatePage.tsx
+@@ -53,6 +53,7 @@ interface FormData {
+   chargeTaxes: boolean;
+   description: RawDraftContentState;
+   isPublished: boolean;
++  labor: number;
+   name: string;
+   productType: string;
+   seoDescription: string;
+@@ -140,6 +141,7 @@ export const ProductCreatePage: React.FC<ProductCreatePageProps> = ({
+     collections: [],
+     description: {} as any,
+     isPublished: false,
++    labor: 0,
+     name: "",
+     productType: "",
+     publicationDate: "",
+diff --git a/src/products/components/ProductPricing/ProductPricing.tsx b/src/products/components/ProductPricing/ProductPricing.tsx
+index f39d406e..5c43a114 100644
+--- a/src/products/components/ProductPricing/ProductPricing.tsx
++++ b/src/products/components/ProductPricing/ProductPricing.tsx
+@@ -26,6 +26,7 @@ interface ProductPricingProps {
+   data: {
+     chargeTaxes: boolean;
+     basePrice: number;
++    labor: number;
+   };
+   disabled: boolean;
+   errors: ProductErrorFragment[];
+@@ -38,7 +39,7 @@ const ProductPricing: React.FC<ProductPricingProps> = props => {
+   const classes = useStyles(props);
+   const intl = useIntl();
+ 
+-  const formErrors = getFormErrors(["basePrice"], errors);
++  const formErrors = getFormErrors(["basePrice","labor"], errors);
+ 
+   return (
+     <Card>
+@@ -78,6 +79,24 @@ const ProductPricing: React.FC<ProductPricingProps> = props => {
+               }
+             }}
+           />
++          <PriceField
++            disabled={disabled}
++            label={intl.formatMessage({
++              defaultMessage: "Labor",
++              description: "Labor price"
++            })}
++            error={!!formErrors.labor}
++            hint={getProductErrorMessage(formErrors.labor, intl)}
++            name="labor"
++            value={data.labor}
++            currencySymbol={currency}
++            onChange={onChange}
++            InputProps={{
++              inputProps: {
++                min: 0
++              }
++            }}
++          />
+         </div>
+       </CardContent>
+     </Card>
+diff --git a/src/products/mutations.ts b/src/products/mutations.ts
+index 18bcec29..92606cf0 100644
+--- a/src/products/mutations.ts
++++ b/src/products/mutations.ts
+@@ -152,6 +152,7 @@ export const productUpdateMutation = gql`
+     $isPublished: Boolean!
+     $name: String
+     $basePrice: Decimal
++    $labor: Decimal
+     $seo: SeoInput
+   ) {
+     productUpdate(
+@@ -166,6 +167,7 @@ export const productUpdateMutation = gql`
+         isPublished: $isPublished
+         name: $name
+         basePrice: $basePrice
++        labor: $labor
+         seo: $seo
+       }
+     ) {
+@@ -200,6 +202,7 @@ export const simpleProductUpdateMutation = gql`
+     $isPublished: Boolean!
+     $name: String
+     $basePrice: Decimal
++    $labor: Decimal
+     $productVariantId: ID!
+     $productVariantInput: ProductVariantInput!
+     $seo: SeoInput
+@@ -220,6 +223,7 @@ export const simpleProductUpdateMutation = gql`
+         isPublished: $isPublished
+         name: $name
+         basePrice: $basePrice
++        labor: $labor
+         seo: $seo
+         weight: $weight
+       }
+@@ -292,6 +296,7 @@ export const productCreateMutation = gql`
+     $isPublished: Boolean!
+     $name: String!
+     $basePrice: Decimal
++    $labor: Decimal
+     $productType: ID!
+     $sku: String
+     $seo: SeoInput
+@@ -310,6 +315,7 @@ export const productCreateMutation = gql`
+         isPublished: $isPublished
+         name: $name
+         basePrice: $basePrice
++        labor: $labor
+         productType: $productType
+         sku: $sku
+         seo: $seo
+diff --git a/src/products/queries.ts b/src/products/queries.ts
+index 5ae6e21d..81615dee 100644
+--- a/src/products/queries.ts
++++ b/src/products/queries.ts
+@@ -74,6 +74,9 @@ export const productFragment = gql`
+     basePrice {
+       ...Money
+     }
++    labor {
++      ...Money
++    }
+     productType {
+       id
+       name
+@@ -140,6 +143,9 @@ export const productFragmentDetails = gql`
+     basePrice {
+       ...Money
+     }
++    labor {
++      ...Money
++    }
+     margin {
+       start
+       stop
+@@ -502,6 +508,9 @@ const createMultipleVariantsData = gql`
+       basePrice {
+         ...Money
+       }
++      labor {
++        ...Money
++      }
+     }
+     warehouses(first: 20) {
+       edges {
+diff --git a/src/products/types/Product.ts b/src/products/types/Product.ts
+index 370fdc3d..eba43b1f 100644
+--- a/src/products/types/Product.ts
++++ b/src/products/types/Product.ts
+@@ -78,6 +78,12 @@ export interface Product_basePrice {
+   currency: string;
+ }
+ 
++export interface Product_labor{
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface Product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -199,6 +205,7 @@ export interface Product {
+   category: Product_category | null;
+   collections: (Product_collections | null)[] | null;
+   basePrice: Product_basePrice | null;
++  labor: Product_labor | null;
+   margin: Product_margin | null;
+   purchaseCost: Product_purchaseCost | null;
+   isAvailable: boolean | null;
+diff --git a/src/products/types/ProductCreate.ts b/src/products/types/ProductCreate.ts
+index e1d020c3..4dfea374 100644
+--- a/src/products/types/ProductCreate.ts
++++ b/src/products/types/ProductCreate.ts
+@@ -84,6 +84,12 @@ export interface ProductCreate_productCreate_product_basePrice {
+   currency: string;
+ }
+ 
++export interface ProductCreate_productCreate_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface ProductCreate_productCreate_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -205,6 +211,7 @@ export interface ProductCreate_productCreate_product {
+   category: ProductCreate_productCreate_product_category | null;
+   collections: (ProductCreate_productCreate_product_collections | null)[] | null;
+   basePrice: ProductCreate_productCreate_product_basePrice | null;
++  labor: ProductCreate_productCreate_product_labor | null;
+   margin: ProductCreate_productCreate_product_margin | null;
+   purchaseCost: ProductCreate_productCreate_product_purchaseCost | null;
+   isAvailable: boolean | null;
+@@ -237,6 +244,7 @@ export interface ProductCreateVariables {
+   isPublished: boolean;
+   name: string;
+   basePrice?: any | null;
++  labor?: any | null;
+   productType: string;
+   sku?: string | null;
+   seo?: SeoInput | null;
+diff --git a/src/products/types/ProductDetails.ts b/src/products/types/ProductDetails.ts
+index 86d337d4..512a3069 100644
+--- a/src/products/types/ProductDetails.ts
++++ b/src/products/types/ProductDetails.ts
+@@ -78,6 +78,12 @@ export interface ProductDetails_product_basePrice {
+   currency: string;
+ }
+ 
++export interface ProductDetails_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface ProductDetails_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -199,6 +205,7 @@ export interface ProductDetails_product {
+   category: ProductDetails_product_category | null;
+   collections: (ProductDetails_product_collections | null)[] | null;
+   basePrice: ProductDetails_product_basePrice | null;
++  labor: ProductDetails_product_labor | null;
+   margin: ProductDetails_product_margin | null;
+   purchaseCost: ProductDetails_product_purchaseCost | null;
+   isAvailable: boolean | null;
+diff --git a/src/products/types/ProductImageCreate.ts b/src/products/types/ProductImageCreate.ts
+index 6614ea71..29e0568f 100644
+--- a/src/products/types/ProductImageCreate.ts
++++ b/src/products/types/ProductImageCreate.ts
+@@ -84,6 +84,13 @@ export interface ProductImageCreate_productImageCreate_product_basePrice {
+   currency: string;
+ }
+ 
++export interface ProductImageCreate_productImageCreate_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
++
+ export interface ProductImageCreate_productImageCreate_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -205,6 +212,7 @@ export interface ProductImageCreate_productImageCreate_product {
+   category: ProductImageCreate_productImageCreate_product_category | null;
+   collections: (ProductImageCreate_productImageCreate_product_collections | null)[] | null;
+   basePrice: ProductImageCreate_productImageCreate_product_basePrice | null;
++  labor: ProductImageCreate_productImageCreate_product_labor | null;
+   margin: ProductImageCreate_productImageCreate_product_margin | null;
+   purchaseCost: ProductImageCreate_productImageCreate_product_purchaseCost | null;
+   isAvailable: boolean | null;
+diff --git a/src/products/types/ProductImageUpdate.ts b/src/products/types/ProductImageUpdate.ts
+index 26adab93..594b600d 100644
+--- a/src/products/types/ProductImageUpdate.ts
++++ b/src/products/types/ProductImageUpdate.ts
+@@ -84,6 +84,12 @@ export interface ProductImageUpdate_productImageUpdate_product_basePrice {
+   currency: string;
+ }
+ 
++export interface ProductImageUpdate_productImageUpdate_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface ProductImageUpdate_productImageUpdate_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -205,6 +211,7 @@ export interface ProductImageUpdate_productImageUpdate_product {
+   category: ProductImageUpdate_productImageUpdate_product_category | null;
+   collections: (ProductImageUpdate_productImageUpdate_product_collections | null)[] | null;
+   basePrice: ProductImageUpdate_productImageUpdate_product_basePrice | null;
++  labor: ProductImageUpdate_productImageUpdate_product_labor | null;
+   margin: ProductImageUpdate_productImageUpdate_product_margin | null;
+   purchaseCost: ProductImageUpdate_productImageUpdate_product_purchaseCost | null;
+   isAvailable: boolean | null;
+diff --git a/src/products/types/ProductUpdate.ts b/src/products/types/ProductUpdate.ts
+index 6a4e6841..882ac912 100644
+--- a/src/products/types/ProductUpdate.ts
++++ b/src/products/types/ProductUpdate.ts
+@@ -84,6 +84,12 @@ export interface ProductUpdate_productUpdate_product_basePrice {
+   currency: string;
+ }
+ 
++export interface ProductUpdate_productUpdate_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface ProductUpdate_productUpdate_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -205,6 +211,7 @@ export interface ProductUpdate_productUpdate_product {
+   category: ProductUpdate_productUpdate_product_category | null;
+   collections: (ProductUpdate_productUpdate_product_collections | null)[] | null;
+   basePrice: ProductUpdate_productUpdate_product_basePrice | null;
++  labor: ProductUpdate_productUpdate_product_labor | null;
+   margin: ProductUpdate_productUpdate_product_margin | null;
+   purchaseCost: ProductUpdate_productUpdate_product_purchaseCost | null;
+   isAvailable: boolean | null;
+@@ -238,5 +245,6 @@ export interface ProductUpdateVariables {
+   isPublished: boolean;
+   name?: string | null;
+   basePrice?: any | null;
++  labor?: any | null;
+   seo?: SeoInput | null;
+ }
+diff --git a/src/products/types/SimpleProductUpdate.ts b/src/products/types/SimpleProductUpdate.ts
+index 4ebea508..a0add682 100644
+--- a/src/products/types/SimpleProductUpdate.ts
++++ b/src/products/types/SimpleProductUpdate.ts
+@@ -84,6 +84,12 @@ export interface SimpleProductUpdate_productUpdate_product_basePrice {
+   currency: string;
+ }
+ 
++export interface SimpleProductUpdate_productUpdate_product_labor {
++  __typename: "Money";
++  amount: number;
++  currency: string;
++}
++
+ export interface SimpleProductUpdate_productUpdate_product_margin {
+   __typename: "Margin";
+   start: number | null;
+@@ -205,6 +211,7 @@ export interface SimpleProductUpdate_productUpdate_product {
+   category: SimpleProductUpdate_productUpdate_product_category | null;
+   collections: (SimpleProductUpdate_productUpdate_product_collections | null)[] | null;
+   basePrice: SimpleProductUpdate_productUpdate_product_basePrice | null;
++  labor: SimpleProductUpdate_productUpdate_product_labor | null;
+   margin: SimpleProductUpdate_productUpdate_product_margin | null;
+   purchaseCost: SimpleProductUpdate_productUpdate_product_purchaseCost | null;
+   isAvailable: boolean | null;
+@@ -764,6 +771,7 @@ export interface SimpleProductUpdateVariables {
+   isPublished: boolean;
+   name?: string | null;
+   basePrice?: any | null;
++  labor?: any | null;
+   productVariantId: string;
+   productVariantInput: ProductVariantInput;
+   seo?: SeoInput | null;
+diff --git a/src/products/utils/data.ts b/src/products/utils/data.ts
+index d45704b4..b6fcc6b7 100644
+--- a/src/products/utils/data.ts
++++ b/src/products/utils/data.ts
+@@ -170,6 +170,7 @@ export function getChoices(nodes: Node[]): SingleAutocompleteChoiceType[] {
+ 
+ export interface ProductUpdatePageFormData {
+   basePrice: number;
++  labor: number;
+   category: string | null;
+   collections: string[];
+   chargeTaxes: boolean;
+@@ -198,6 +199,7 @@ export function getProductUpdatePageFormData(
+     ),
+     description: maybe(() => JSON.parse(product.descriptionJson)),
+     isPublished: maybe(() => product.isPublished, false),
++    labor: maybe(() => product.labor.amount,0),
+     name: maybe(() => product.name, ""),
+     publicationDate: maybe(() => product.publicationDate, ""),
+     seoDescription: maybe(() => product.seoDescription, ""),
+diff --git a/src/products/views/ProductCreate.tsx b/src/products/views/ProductCreate.tsx
+index 5dfc6422..04a6272c 100644
+--- a/src/products/views/ProductCreate.tsx
++++ b/src/products/views/ProductCreate.tsx
+@@ -80,6 +80,7 @@ export const ProductCreateView: React.FC = () => {
+               collections: formData.collections,
+               descriptionJson: JSON.stringify(formData.description),
+               isPublished: formData.isPublished,
++              labor: decimal(formData.labor),
+               name: formData.name,
+               productType: formData.productType,
+               publicationDate:
+diff --git a/src/products/views/ProductUpdate/handlers.ts b/src/products/views/ProductUpdate/handlers.ts
+index 335bbe24..baa6ca0e 100644
+--- a/src/products/views/ProductUpdate/handlers.ts
++++ b/src/products/views/ProductUpdate/handlers.ts
+@@ -27,6 +27,7 @@ export function createUpdateHandler(
+       descriptionJson: JSON.stringify(data.description),
+       id: product.id,
+       isPublished: data.isPublished,
++      labor: decimal(data.labor),
+       name: data.name,
+       publicationDate:
+         data.publicationDate !== "" ? data.publicationDate : null,
+diff --git a/src/storybook/stories/products/ProductUpdatePage.tsx b/src/storybook/stories/products/ProductUpdatePage.tsx
+index 2efef0db..fac2a9dd 100644
+--- a/src/storybook/stories/products/ProductUpdatePage.tsx
++++ b/src/storybook/stories/products/ProductUpdatePage.tsx
+@@ -114,6 +114,7 @@ storiesOf("Views / Products / Product edit", module)
+       {...props}
+       errors={([
+         "basePrice",
++        "labor",
+         "category",
+         "chargeTaxes",
+         "collections",

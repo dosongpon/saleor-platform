@@ -1,0 +1,181 @@
+diff --git a/src/@sdk/fragments/products.ts b/src/@sdk/fragments/products.ts
+index 8d05cf03..60f50e68 100644
+--- a/src/@sdk/fragments/products.ts
++++ b/src/@sdk/fragments/products.ts
+@@ -5,6 +5,9 @@ export const basicProductFragment = gql`
+   fragment BasicProductFields on Product {
+     id
+     name
++    labor {
++      ...Price
++    }
+     thumbnail {
+       url
+       alt
+@@ -34,6 +37,9 @@ export const productVariantFragment = gql`
+     id
+     sku
+     name
++    labor {
++      ...Price
++    }
+     quantityAvailable(countryCode: $countryCode)
+     isAvailable
+     pricing {
+diff --git a/src/@sdk/queries/gqlTypes/ProductDetails.ts b/src/@sdk/queries/gqlTypes/ProductDetails.ts
+index 9355fd80..5c6e79b4 100644
+--- a/src/@sdk/queries/gqlTypes/ProductDetails.ts
++++ b/src/@sdk/queries/gqlTypes/ProductDetails.ts
+@@ -172,6 +172,18 @@ export interface ProductDetails_product_pricing_priceRange_stop_net {
+   currency: string;
+ }
+ 
++export interface ProductDetails_product_labor {
++  __typename: "Money";
++  /**
++   * Amount of money.
++   */
++  amount: number;
++  /**
++   * Currency code.
++   */
++  currency: string;
++}
++
+ export interface ProductDetails_product_pricing_priceRange_stop {
+   __typename: "TaxedMoney";
+   /**
+diff --git a/src/@sdk/repository/types.ts b/src/@sdk/repository/types.ts
+index 6e9d99af..06a0d231 100644
+--- a/src/@sdk/repository/types.ts
++++ b/src/@sdk/repository/types.ts
+@@ -20,6 +20,7 @@ export interface ICheckoutModelLineVariant {
+   quantityAvailable?: number;
+   id: string;
+   name?: string;
++  labor?: number;
+   sku?: string;
+   pricing?: Checkout_lines_variant_pricing | null;
+   product?: Checkout_lines_variant_product;
+diff --git a/src/components/ProductDescription/index.tsx b/src/components/ProductDescription/index.tsx
+index 2d459828..f232fce9 100644
+--- a/src/components/ProductDescription/index.tsx
++++ b/src/components/ProductDescription/index.tsx
+@@ -5,6 +5,7 @@ import * as React from "react";
+ 
+ import { ProductVariantPicker } from "@components/organisms";
+ import {
++  ProductDetails_product_labor,
+   ProductDetails_product_pricing,
+   ProductDetails_product_variants,
+   ProductDetails_product_variants_pricing,
+@@ -21,6 +22,7 @@ interface ProductDescriptionProps {
+   productId: string;
+   productVariants: ProductDetails_product_variants[];
+   name: string;
++  labor: ProductDetails_product_labor;
+   pricing: ProductDetails_product_pricing;
+   items: ICheckoutModelLine[];
+   addToCart(varinatId: string, quantity?: number): void;
+@@ -140,7 +142,7 @@ class ProductDescription extends React.Component<
+   );
+ 
+   render() {
+-    const { name } = this.props;
++    const { name, labor } = this.props;
+     const { variant, variantStock, quantity } = this.state;
+ 
+     const availableQuantity = this.getAvailableQuantity();
+@@ -155,6 +157,7 @@ class ProductDescription extends React.Component<
+     return (
+       <div className="product-description">
+         <h3>{name}</h3>
++    <p>ค่าแรง {labor.amount}</p>
+         {isOutOfStock ? (
+           this.renderErrorMessage("Out of stock")
+         ) : (
+diff --git a/src/core/config.ts b/src/core/config.ts
+index b1e533b4..d9cfa7e6 100644
+--- a/src/core/config.ts
++++ b/src/core/config.ts
+@@ -10,10 +10,14 @@ export const PROVIDERS = {
+   DUMMY: {
+     label: "Dummy",
+   },
++  SCB_QR:{
++    label: "SCB-QR"
++  },
+   STRIPE: {
+     href: "https://js.stripe.com/v3/",
+     label: "Stripe",
+   },
++
+ };
+ export const STATIC_PAGES = [
+   {
+@@ -48,7 +52,7 @@ export const META_DEFAULTS = {
+   description:
+     "Open-source PWA storefront built with Saleor's e-commerce GraphQL API. Written with React and TypeScript.",
+   image: `${window.location.origin}${require("../images/logo.svg")}`,
+-  title: "Demo PWA Storefront – Saleor Commerce",
++  title: "ShiningGold Jewelry Shop",
+   type: "website",
+   url: window.location.origin,
+ };
+diff --git a/src/views/Product/Page.tsx b/src/views/Product/Page.tsx
+index f9d8680f..48c8257a 100644
+--- a/src/views/Product/Page.tsx
++++ b/src/views/Product/Page.tsx
+@@ -93,6 +93,7 @@ class Page extends React.PureComponent<
+         items={this.props.items}
+         productId={product.id}
+         name={product.name}
++        labor={product.labor}
+         productVariants={product.variants}
+         pricing={product.pricing}
+         addToCart={this.props.add}
+diff --git a/src/views/Product/gqlTypes/ProductDetails.ts b/src/views/Product/gqlTypes/ProductDetails.ts
+index 6d53cea5..e5f2178a 100644
+--- a/src/views/Product/gqlTypes/ProductDetails.ts
++++ b/src/views/Product/gqlTypes/ProductDetails.ts
+@@ -172,6 +172,17 @@ export interface ProductDetails_product_pricing_priceRange_stop_net {
+   currency: string;
+ }
+ 
++export interface ProductDetails_product_labor {
++  __typename: "Money";
++  /**
++   * Amount of money.
++   */
++  amount: number;
++  /**
++   * Currency code.
++   */
++  currency: string;
++}
+ export interface ProductDetails_product_pricing_priceRange_stop {
+   __typename: "TaxedMoney";
+   /**
+@@ -689,6 +700,7 @@ export interface ProductDetails_product {
+    */
+   id: string;
+   name: string;
++  labor: ProductDetails_product_labor;
+   /**
+    * The main thumbnail for a product.
+    */
+diff --git a/src/views/Product/queries.ts b/src/views/Product/queries.ts
+index a32ddf3f..3326d574 100644
+--- a/src/views/Product/queries.ts
++++ b/src/views/Product/queries.ts
+@@ -23,6 +23,10 @@ export const basicProductFragment = gql`
+   fragment BasicProductFields on Product {
+     id
+     name
++    labor {
++      currency
++      amount
++    }
+     thumbnail {
+       url
+       alt

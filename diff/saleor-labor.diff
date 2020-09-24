@@ -1,0 +1,117 @@
+diff --git a/saleor/graphql/product/mutations/products.py b/saleor/graphql/product/mutations/products.py
+index 28c3f0817..afeaf90cd 100644
+--- a/saleor/graphql/product/mutations/products.py
++++ b/saleor/graphql/product/mutations/products.py
+@@ -51,7 +51,6 @@ from ..utils import (
+     validate_attribute_input_for_variant,
+ )
+ 
+-
+ class CategoryInput(graphene.InputObjectType):
+     description = graphene.String(description="Category description (HTML/text).")
+     description_json = graphene.JSONString(description="Category description (JSON).")
+@@ -517,6 +516,7 @@ class ProductInput(graphene.InputObjectType):
+     name = graphene.String(description="Product name.")
+     slug = graphene.String(description="Product slug.")
+     base_price = Decimal(description="Product price.")
++    labor = Decimal(description="Labor price.")
+     tax_code = graphene.String(description="Tax rate for enabled tax gateway.")
+     seo = SeoInput(description="Search engine optimization fields.")
+     weight = WeightScalar(description="Weight of the Product.", required=False)
+@@ -831,6 +831,14 @@ class ProductCreate(ModelMutation):
+         except ValidationError as error:
+             error.code = ProductErrorCode.REQUIRED.value
+             raise ValidationError({"slug": error})
++        # !SGB set labor
++        # ! start
++        labor = data.get('labor', 0)
++        print('input')
++        pp(data)
++        if labor:
++            cleaned_input["labor_amount"] = labor
++        # ! end
+         # Try to get price from "basePrice" or "price" field. Once "price" is removed
+         # from the schema, only "basePrice" should be used here.
+         price = data.get("base_price", data.get("price"))
+diff --git a/saleor/graphql/product/types/products.py b/saleor/graphql/product/types/products.py
+index b2f5b22b1..7455e6447 100644
+--- a/saleor/graphql/product/types/products.py
++++ b/saleor/graphql/product/types/products.py
+@@ -428,6 +428,7 @@ class Product(CountableDjangoObjectType):
+         description="Whether the product is in stock and visible or not."
+     )
+     base_price = graphene.Field(Money, description="The product's default base price.")
++    labor = graphene.Field(Money, description="Labor price for this product")
+     minimal_variant_price = graphene.Field(
+         Money, description="The price of the cheapest variant (including discounts)."
+     )
+@@ -552,6 +553,10 @@ class Product(CountableDjangoObjectType):
+     def resolve_base_price(root: models.Product, _info):
+         return root.price
+ 
++    @staticmethod
++    def resolve_labor(root: models.Product, _info):
++        return root.labor
++
+     @staticmethod
+     def resolve_price(root: models.Product, info):
+         context = info.context
+diff --git a/saleor/graphql/schema.graphql b/saleor/graphql/schema.graphql
+index 606a4bfe5..a73245d87 100644
+--- a/saleor/graphql/schema.graphql
++++ b/saleor/graphql/schema.graphql
+@@ -3320,6 +3320,7 @@ type Product implements Node & ObjectWithMetadata {
+   pricing: ProductPricingInfo
+   isAvailable: Boolean
+   basePrice: Money
++  labor: Money
+   minimalVariantPrice: Money
+   taxType: TaxType
+   attributes: [SelectedAttribute!]!
+@@ -3392,6 +3393,7 @@ input ProductCreateInput {
+   name: String
+   slug: String
+   basePrice: Decimal
++  labor: Decimal
+   taxCode: String
+   seo: SeoInput
+   weight: WeightScalar
+@@ -3506,6 +3508,7 @@ input ProductInput {
+   name: String
+   slug: String
+   basePrice: Decimal
++  labor: Decimal
+   taxCode: String
+   seo: SeoInput
+   weight: WeightScalar
+diff --git a/saleor/product/models.py b/saleor/product/models.py
+index df6ab80be..4834ce033 100644
+--- a/saleor/product/models.py
++++ b/saleor/product/models.py
+@@ -277,6 +277,14 @@ class Product(SeoModel, ModelWithMetadata, PublishableModel):
+         max_digits=settings.DEFAULT_MAX_DIGITS,
+         decimal_places=settings.DEFAULT_DECIMAL_PLACES,
+     )
++    #! SGB
++    #! start
++    labor_amount = models.DecimalField(
++        max_digits=settings.DEFAULT_MAX_DIGITS,
++        decimal_places=settings.DEFAULT_DECIMAL_PLACES,
++    )
++    labor = MoneyField(amount_field="labor_amount", currency_field="currency")
++    #! end
+     price = MoneyField(amount_field="price_amount", currency_field="currency")
+ 
+     minimal_variant_price_amount = models.DecimalField(
+diff --git a/saleor/webhook/payloads.py b/saleor/webhook/payloads.py
+index 75bac8321..64ca4f485 100644
+--- a/saleor/webhook/payloads.py
++++ b/saleor/webhook/payloads.py
+@@ -180,6 +180,7 @@ def generate_product_payload(product: "Product"):
+         "attributes",
+         "updated_at",
+         "charge_taxes",
++        "labor",
+         "weight",
+         "publication_date",
+         "is_published",
